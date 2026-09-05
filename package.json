@@ -6,10 +6,11 @@
 	"scripts": {
 		"dev": "pnpm db:up && drizzle-kit generate && drizzle-kit migrate && next dev",
 		"build": "next build",
+		"vercel-build": "drizzle-kit migrate && next build",
 		"start": "next start",
 		"fmt": "prettier -w './**/*.{md,yml}' && biome format --write .",
 		"lint": "biome lint --write . && eslint --fix && knip --tags=-knipignore",
-		"prepare": "lefthook install",
+		"prepare": "[ \"$VERCEL\" = \"1\" ] || lefthook install",
 		"setup": "corepack enable pnpm",
 		"test": "NODE_ENV=test vitest run",
 		"db:up": "docker compose up -d --wait",
