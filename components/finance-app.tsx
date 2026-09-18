@@ -135,6 +135,7 @@ type ChartPoint = {
 };
 
 type BreakdownPoint = {
+	id: string;
 	name: string;
 	amount: number;
 	percent: number;
@@ -222,6 +223,11 @@ const tagChartColors: Record<TagColor | "uncategorized", string> = {
 	slate: "#64748b",
 	uncategorized: "#a1a1aa",
 };
+
+// Breakdown rows are keyed by tag id, so these synthetic rows use ids that a
+// real tag (a UUIDv7) can never produce.
+const uncategorizedBreakdownId = "breakdown:uncategorized";
+const aggregatedBreakdownId = "breakdown:aggregated";
 
 const entryDialogContentClassName =
 	"flex max-h-[calc(100dvh-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[min(90vh,42rem)] sm:max-w-2xl";
@@ -1182,12 +1188,15 @@ function BreakdownChart({
 					tickFormatter={(value) => compactMoney(Number(value))}
 				/>
 				<YAxis
-					dataKey="name"
+					dataKey="id"
 					type="category"
 					tickLine={false}
 					axisLine={false}
 					fontSize={12}
 					width={72}
+					tickFormatter={(value) =>
+						data.find((item) => item.id === value)?.name ?? ""
+					}
 				/>
 				<Tooltip
 					formatter={(value, name, item) => {
@@ -1197,10 +1206,13 @@ function BreakdownChart({
 							chartLabel(String(name)),
 						];
 					}}
+					labelFormatter={(label) =>
+						data.find((item) => item.id === label)?.name ?? ""
+					}
 				/>
 				<Bar dataKey="amount" name={entryTypeLabel(type)} radius={[0, 8, 8, 0]}>
 					{data.map((item) => (
-						<Cell key={item.name} fill={item.color} />
+						<Cell key={item.id} fill={item.color} />
 					))}
 				</Bar>
 			</BarChart>
@@ -1793,37 +1805,51 @@ function createTypeBreakdown(entries: FinanceEntry[], type: EntryType) {
 		(total, entry) => total + entry.amountMinor,
 		0,
 	);
-	const buckets = new Map<string, { amount: number; color: string }>();
+	const buckets = new Map<
+		string,
+		{ name: string; amount: number; color: string }
+	>();
+
+	const addToBucket = (
+		id: string,
+		name: string,
+		color: string,
+		amount: number,
+	) => {
+		const current = buckets.get(id) ?? { name, amount: 0, color };
+		buckets.set(id, { ...current, amount: current.amount + amount });
+	};
 
 	for (const entry of matchingEntries) {
 		if (!entry.tags.length) {
-			const current = buckets.get("未分類") ?? {
-				amount: 0,
-				color: tagChartColors.uncategorized,
-			};
-			buckets.set("未分類", {
-				...current,
-				amount: current.amount + entry.amountMinor,
-			});
+			addToBucket(
+				uncategorizedBreakdownId,
+				"未分類",
+				tagChartColors.uncategorized,
+				entry.amountMinor,
+			);
 			continue;
 		}
 
-		const sharedAmount = entry.amountMinor / entry.tags.length;
-		for (const tag of entry.tags) {
-			const current = buckets.get(tag.name) ?? {
-				amount: 0,
-				color: tagChartColors[tag.color],
-			};
-			buckets.set(tag.name, {
-				...current,
-				amount: current.amount + sharedAmount,
-			});
-		}
+		// Split in integer minor units so the bars always add up to the entry
+		// total; the remainder goes to the leading tags one unit at a time.
+		const shareCount = entry.tags.length;
+		const baseAmount = Math.floor(entry.amountMinor / shareCount);
+		const remainder = entry.amountMinor - baseAmount * shareCount;
+		entry.tags.forEach((tag, index) => {
+			addToBucket(
+				tag.id,
+				tag.name,
+				tagChartColors[tag.color],
+				baseAmount + (index < remainder ? 1 : 0),
+			);
+		});
 	}
 
 	const points = Array.from(buckets.entries())
-		.map(([name, value]) => ({
-			name,
+		.map(([id, value]) => ({
+			id,
+			name: value.name,
 			amount: value.amount,
 			percent: totalAmount > 0 ? value.amount / totalAmount : 0,
 			color: value.color,
@@ -1843,7 +1869,8 @@ function createTypeBreakdown(entries: FinanceEntry[], type: EntryType) {
 	return [
 		...visiblePoints,
 		{
-			name: "その他",
+			id: aggregatedBreakdownId,
+			name: `その他（他${hiddenPoints.length}件）`,
 			amount: otherAmount,
 			percent: totalAmount > 0 ? otherAmount / totalAmount : 0,
 			color: tagChartColors.slate,
