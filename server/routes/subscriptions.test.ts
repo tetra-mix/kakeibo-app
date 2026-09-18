@@ -188,4 +188,45 @@ describe("/routes/subscriptions", () => {
 			billingIntervalCount: 30,
 		});
 	});
+
+	it("一部の項目だけを更新しても他の項目は保持される", async () => {
+		await createUser();
+		const createResponse = await app.request("/", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name: "Netflix",
+				amountMinor: 1490,
+				billingIntervalUnit: "month",
+				billingIntervalCount: 1,
+				nextPaymentAt: "2026-05-01T00:00:00.000Z",
+				memo: "家族プラン",
+				isPrivate: true,
+				newLabels: [{ name: "娯楽", color: "violet" }],
+			}),
+		});
+		const createJson = await createResponse.json();
+
+		expect(createResponse.status).toBe(201);
+
+		const subscriptionId = createJson.subscription.id as string;
+		const updateResponse = await app.request(`/${subscriptionId}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ amountMinor: 1590 }),
+		});
+		const updateJson = await updateResponse.json();
+
+		expect(updateResponse.status).toBe(200);
+		expect(updateJson.subscription).toMatchObject({
+			name: "Netflix",
+			amountMinor: 1590,
+			currency: "JPY",
+			memo: "家族プラン",
+			isPrivate: true,
+		});
+		expect(updateJson.subscription.labels).toEqual([
+			expect.objectContaining({ name: "娯楽" }),
+		]);
+	});
 });

@@ -66,21 +66,36 @@ const newTagSchema = z.object({
 	color: tagColorSchema,
 });
 
-export const createFinanceEntrySchema = z.object({
+const financeEntryFields = {
 	type: entryTypeSchema,
 	title: z.string().trim().min(1).max(120),
 	amountMinor: z.number().int().min(0).max(999_999_999_999),
-	currency: currencySchema.default("JPY"),
+	currency: currencySchema,
 	occurredAt: occurredAtSchema,
-	paymentMethod: paymentMethodSchema.default("other"),
-	merchant: nullableTextSchema.default(null),
-	memo: nullableTextSchema.default(null),
-	isPrivate: z.boolean().default(false),
-	tagIds: z.array(z.string().uuid()).max(50).default([]),
-	newTags: z.array(newTagSchema).max(20).default([]),
+	paymentMethod: paymentMethodSchema,
+	merchant: nullableTextSchema,
+	memo: nullableTextSchema,
+	isPrivate: z.boolean(),
+	tagIds: z.array(z.string().uuid()).max(50),
+	newTags: z.array(newTagSchema).max(20),
+};
+
+export const createFinanceEntrySchema = z.object({
+	...financeEntryFields,
+	currency: financeEntryFields.currency.default("JPY"),
+	paymentMethod: financeEntryFields.paymentMethod.default("other"),
+	merchant: financeEntryFields.merchant.default(null),
+	memo: financeEntryFields.memo.default(null),
+	isPrivate: financeEntryFields.isPrivate.default(false),
+	tagIds: financeEntryFields.tagIds.default([]),
+	newTags: financeEntryFields.newTags.default([]),
 });
 
-export const updateFinanceEntrySchema = createFinanceEntrySchema
+// Built from the default-free field definitions: `createFinanceEntrySchema.partial()`
+// would keep each field's `.default()`, so omitting a key would silently reset it
+// (e.g. a PATCH without `tagIds` would drop every tag on the entry).
+export const updateFinanceEntrySchema = z
+	.object(financeEntryFields)
 	.partial()
 	.refine((value) => Object.keys(value).length > 0, {
 		message: "No changes provided",

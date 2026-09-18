@@ -42,20 +42,33 @@ const newLabelSchema = z.object({
 	color: labelColorSchema,
 });
 
-export const createSubscriptionSchema = z.object({
+const subscriptionFields = {
 	name: z.string().trim().min(1).max(120),
 	amountMinor: z.number().int().min(0).max(999_999_999_999),
-	currency: currencySchema.default("JPY"),
+	currency: currencySchema,
 	billingIntervalUnit: billingIntervalUnitSchema,
 	billingIntervalCount: z.number().int().min(1).max(60),
 	nextPaymentAt: nextPaymentAtSchema,
-	memo: memoSchema.default(null),
-	isPrivate: z.boolean().default(false),
-	labelIds: z.array(z.string().uuid()).max(50).default([]),
-	newLabels: z.array(newLabelSchema).max(20).default([]),
+	memo: memoSchema,
+	isPrivate: z.boolean(),
+	labelIds: z.array(z.string().uuid()).max(50),
+	newLabels: z.array(newLabelSchema).max(20),
+};
+
+export const createSubscriptionSchema = z.object({
+	...subscriptionFields,
+	currency: subscriptionFields.currency.default("JPY"),
+	memo: subscriptionFields.memo.default(null),
+	isPrivate: subscriptionFields.isPrivate.default(false),
+	labelIds: subscriptionFields.labelIds.default([]),
+	newLabels: subscriptionFields.newLabels.default([]),
 });
 
-export const updateSubscriptionSchema = createSubscriptionSchema
+// Built from the default-free field definitions: `createSubscriptionSchema.partial()`
+// would keep each field's `.default()`, so omitting a key would silently reset it
+// (e.g. a PATCH without `labelIds` would drop every label on the subscription).
+export const updateSubscriptionSchema = z
+	.object(subscriptionFields)
 	.partial()
 	.refine((value) => Object.keys(value).length > 0, {
 		message: "No changes provided",
