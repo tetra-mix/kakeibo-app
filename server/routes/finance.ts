@@ -333,14 +333,40 @@ async function getFinanceEntryWithTags(
 	userId: string,
 	entryId: string,
 ) {
-	const result = await getFinanceEntriesWithTags(db, userId);
-	const entry = result.entries.find((item) => item.id === entryId);
+	const [entry] = await db
+		.select()
+		.from(schema.financeEntry)
+		.where(
+			and(
+				eq(schema.financeEntry.id, entryId),
+				eq(schema.financeEntry.userId, userId),
+			),
+		)
+		.limit(1);
 
 	if (!entry) {
 		throw new HTTPException(404, { message: "Finance entry not found" });
 	}
 
-	return entry;
+	const tags = await db
+		.select({
+			id: schema.financeTag.id,
+			userId: schema.financeTag.userId,
+			name: schema.financeTag.name,
+			color: schema.financeTag.color,
+			isDefault: schema.financeTag.isDefault,
+			createdAt: schema.financeTag.createdAt,
+			updatedAt: schema.financeTag.updatedAt,
+		})
+		.from(schema.financeEntryTagAssignment)
+		.innerJoin(
+			schema.financeTag,
+			eq(schema.financeTag.id, schema.financeEntryTagAssignment.tagId),
+		)
+		.where(eq(schema.financeEntryTagAssignment.entryId, entryId))
+		.orderBy(desc(schema.financeTag.isDefault), asc(schema.financeTag.name));
+
+	return { ...entry, tags };
 }
 
 export async function getFinanceAnalytics(
@@ -394,8 +420,14 @@ async function ensureDefaultFinanceTags(db: DbClient, userId: string) {
 		(tag) => !existingNames.has(tag.name),
 	);
 
-	if (tagsToCreate.length) {
-		await db.insert(schema.financeTag).values(
+	// 既定タグが揃っている通常ケースでは追加の往復を発生させない。
+	if (!tagsToCreate.length) {
+		return existingTags;
+	}
+
+	const createdTags = await db
+		.insert(schema.financeTag)
+		.values(
 			tagsToCreate.map((tag) => ({
 				id: uuidv7(),
 				userId,
@@ -403,10 +435,13 @@ async function ensureDefaultFinanceTags(db: DbClient, userId: string) {
 				color: tag.color,
 				isDefault: true,
 			})),
-		);
-	}
+		)
+		.onConflictDoNothing({
+			target: [schema.financeTag.userId, schema.financeTag.name],
+		})
+		.returning();
 
-	return await getUserFinanceTags(db, userId);
+	return sortFinanceTags([...existingTags, ...createdTags]);
 }
 
 export async function createFinanceEntry(
@@ -484,6 +519,7 @@ export async function updateFinanceEntry(
 		}
 
 		if (tagIds !== undefined || newTags !== undefined) {
+			await ensureDefaultFinanceTags(tx, userId);
 			const resolvedTagIds = await resolveFinanceTagIds(tx, userId, {
 				tagIds: tagIds ?? [],
 				newTags: newTags ?? [],
@@ -593,7 +629,7 @@ async function resolveFinanceTagIds(
 		newTags: Array<z.infer<typeof newTagSchema>>;
 	},
 ) {
-	await ensureDefaultFinanceTags(db, userId);
+	// 既定タグの用意は呼び出し側の責務。ここで呼ぶと同一リクエスト内で二重に走る。
 	const existingTagIds = Array.from(new Set(input.tagIds));
 	const selectedTags = existingTagIds.length
 		? await db
@@ -680,6 +716,17 @@ async function getUserFinanceTags(db: DbClient, userId: string) {
 		.from(schema.financeTag)
 		.where(eq(schema.financeTag.userId, userId))
 		.orderBy(desc(schema.financeTag.isDefault), asc(schema.financeTag.name));
+}
+
+// getUserFinanceTags の ORDER BY と同じ並び（既定タグが先、次に名前昇順）を再現する。
+function sortFinanceTags(tags: FinanceTag[]) {
+	return [...tags].sort((left, right) => {
+		if (left.isDefault !== right.isDefault) {
+			return left.isDefault ? -1 : 1;
+		}
+
+		return left.name.localeCompare(right.name);
+	});
 }
 
 function parseIdList(value: string | undefined) {

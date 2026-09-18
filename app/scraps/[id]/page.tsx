@@ -71,6 +71,10 @@ export async function generateMetadata({
 	};
 }
 
+// DB(Neon)と同一リージョンに寄せる。既定の iad1 だと getSession などの
+// クエリごとに日米間のラウンドトリップが乗る。
+export const preferredRegion = "hnd1";
+
 export default async function ScrapPage({ params }: ScrapPageProps) {
 	const { id } = await params;
 	if (!isUuid(id)) {

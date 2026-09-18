@@ -10,6 +10,10 @@ import { db } from "@/lib/db";
 import { isPublicFirstUserEnabled } from "@/lib/public-data-settings";
 import { extractUuid } from "@/lib/uuid";
 
+// DB(Neon)と同一リージョンに寄せる。既定の iad1 だと getSession などの
+// クエリごとに日米間のラウンドトリップが乗る。
+export const preferredRegion = "hnd1";
+
 export default async function ScrapModalPage({
 	params,
 }: {
