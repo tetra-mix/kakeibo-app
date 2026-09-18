@@ -175,4 +175,48 @@ describe("/routes/finance", () => {
 
 		expect(deleteResponse.status).toBe(200);
 	});
+
+	it("一部の項目だけを更新しても他の項目は保持される", async () => {
+		await createUser();
+		const createResponse = await app.request("/entries", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				type: "expense",
+				title: "美容院",
+				amountMinor: 3740,
+				occurredAt: "2026-04-01T00:00:00.000Z",
+				paymentMethod: "cash",
+				merchant: "3740",
+				memo: "現金",
+				isPrivate: true,
+				newTags: [{ name: "その他", color: "slate" }],
+			}),
+		});
+		const createJson = await createResponse.json();
+
+		expect(createResponse.status).toBe(201);
+
+		const entryId = createJson.entry.id as string;
+		const updateResponse = await app.request(`/entries/${entryId}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ merchant: null }),
+		});
+		const updateJson = await updateResponse.json();
+
+		expect(updateResponse.status).toBe(200);
+		expect(updateJson.entry).toMatchObject({
+			title: "美容院",
+			amountMinor: 3740,
+			paymentMethod: "cash",
+			currency: "JPY",
+			merchant: null,
+			memo: "現金",
+			isPrivate: true,
+		});
+		expect(updateJson.entry.tags).toEqual([
+			expect.objectContaining({ name: "その他" }),
+		]);
+	});
 });
