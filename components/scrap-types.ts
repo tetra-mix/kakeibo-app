@@ -1,3 +1,6 @@
+// 一覧ページのサーバー側初期取得とクライアントのページングで共有する。
+export const SCRAPS_PER_PAGE = 30;
+
 export type ScrapKind = "short_text" | "long_text" | "link" | "image";
 
 export type ScrapAttachment = {

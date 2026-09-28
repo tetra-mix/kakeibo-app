@@ -241,9 +241,19 @@ const entryDialogBodyClassName =
 const entryDialogFooterClassName =
 	"border-border border-t bg-background px-4 py-3 sm:px-6 sm:py-4";
 
-export function FinanceApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
-	const [entries, setEntries] = useState<FinanceEntry[]>([]);
-	const [tags, setTags] = useState<FinanceTag[]>([]);
+export function FinanceApp({
+	isReadOnly = false,
+	initialData,
+}: {
+	isReadOnly?: boolean;
+	initialData?: FinanceResponse;
+}) {
+	const [entries, setEntries] = useState<FinanceEntry[]>(() =>
+		initialData ? sortEntries(initialData.entries) : [],
+	);
+	const [tags, setTags] = useState<FinanceTag[]>(() =>
+		initialData ? sortTags(initialData.tags) : [],
+	);
 	const [form, setForm] = useState<EntryFormState>(emptyForm);
 	const [draft, setDraft] = useState<EntryFormState>(emptyForm);
 	const [selectedEntry, setSelectedEntry] = useState<FinanceEntry | null>(null);
@@ -271,13 +281,22 @@ export function FinanceApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 	const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
 	const [newTagName, setNewTagName] = useState("");
 	const [newTagColor, setNewTagColor] = useState<TagColor>("lime");
-	const [tagEdits, setTagEdits] = useState<Record<string, TagEditState>>({});
-	const [ownerName, setOwnerName] = useState<string | null>(null);
+	const [tagEdits, setTagEdits] = useState<Record<string, TagEditState>>(() =>
+		initialData ? createTagEditState(initialData.tags) : {},
+	);
+	const [ownerName, setOwnerName] = useState<string | null>(
+		initialData?.owner?.name ?? null,
+	);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
+	const [isLoading, setIsLoading] = useState(!initialData);
 	const [isSaving, setIsSaving] = useState(false);
 
 	useEffect(() => {
+		// サーバーで取得済みなら再取得しない。
+		if (initialData) {
+			return;
+		}
+
 		let ignore = false;
 
 		const loadFinance = async () => {
@@ -309,7 +328,7 @@ export function FinanceApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 		return () => {
 			ignore = true;
 		};
-	}, []);
+	}, [initialData]);
 
 	const displayMonthRange = getMonthRange(displayMonth);
 	const activePeriod = isPeriodFilterActive

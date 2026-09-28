@@ -184,11 +184,17 @@ const emptyForm: SubscriptionFormState = {
 
 export function SubscriptionApp({
 	isReadOnly = false,
+	initialData,
 }: {
 	isReadOnly?: boolean;
+	initialData?: SubscriptionsResponse;
 }) {
-	const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-	const [labels, setLabels] = useState<SubscriptionLabel[]>([]);
+	const [subscriptions, setSubscriptions] = useState<Subscription[]>(() =>
+		initialData ? sortSubscriptions(initialData.subscriptions) : [],
+	);
+	const [labels, setLabels] = useState<SubscriptionLabel[]>(() =>
+		initialData ? sortLabels(initialData.labels) : [],
+	);
 	const [form, setForm] = useState<SubscriptionFormState>(emptyForm);
 	const [draft, setDraft] = useState<SubscriptionFormState>(emptyForm);
 	const [selectedFilterLabelIds, setSelectedFilterLabelIds] = useState<
@@ -202,12 +208,19 @@ export function SubscriptionApp({
 	const [selectedSubscription, setSelectedSubscription] =
 		useState<Subscription | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
+	const [isLoading, setIsLoading] = useState(!initialData);
 	const [isCreating, setIsCreating] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
-	const [ownerName, setOwnerName] = useState<string | null>(null);
+	const [ownerName, setOwnerName] = useState<string | null>(
+		initialData?.owner?.name ?? null,
+	);
 
 	useEffect(() => {
+		// サーバーで取得済みなら再取得しない。
+		if (initialData) {
+			return;
+		}
+
 		let ignore = false;
 
 		const loadSubscriptions = async () => {
@@ -241,7 +254,7 @@ export function SubscriptionApp({
 		return () => {
 			ignore = true;
 		};
-	}, []);
+	}, [initialData]);
 
 	const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();

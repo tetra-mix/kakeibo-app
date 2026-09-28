@@ -115,6 +115,17 @@ describe("/routes/finance", () => {
 
 		const entryId = createJson.entry.id as string;
 		const tagId = createJson.entry.tags[0].id as string;
+
+		const listAfterCreateResponse = await app.request("/", { method: "GET" });
+		const listAfterCreateJson = await listAfterCreateResponse.json();
+
+		expect(listAfterCreateJson.entries).toEqual([
+			expect.objectContaining({
+				id: entryId,
+				tags: [expect.objectContaining({ id: tagId, name: "変動費" })],
+			}),
+		]);
+
 		const updateResponse = await app.request(`/entries/${entryId}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },

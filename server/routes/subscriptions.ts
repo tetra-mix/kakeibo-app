@@ -9,7 +9,8 @@ import type { Database } from "@/lib/db";
 import { createHonoApp } from "@/server/create-app";
 import { getUserOrThrow } from "@/server/middleware/auth";
 import {
-	getReadableDataOwner,
+	resolveReadableDataOwner,
+	type SessionUser,
 	toPublicDataOwner,
 } from "@/server/routes/public-data-owner";
 
@@ -80,27 +81,7 @@ const subscriptionIdSchema = z.object({
 
 const app = createHonoApp()
 	.get("/", async (c) => {
-		const { user, isReadOnly } = await getReadableDataOwner(c);
-
-		if (!user) {
-			return c.json({
-				subscriptions: [],
-				labels: [],
-				owner: null,
-				isReadOnly,
-			});
-		}
-
-		const db = c.get("db");
-		const result = await getSubscriptionsWithLabels(db, user.id, {
-			maskPrivateDetails: isReadOnly,
-		});
-
-		return c.json({
-			...result,
-			owner: toPublicDataOwner(user),
-			isReadOnly,
-		});
+		return c.json(await getSubscriptionsOverview(c.get("db"), c.get("user")));
 	})
 	.post("/", zValidator("json", createSubscriptionSchema), async (c) => {
 		const { user } = await getUserOrThrow(c);
@@ -216,34 +197,65 @@ const app = createHonoApp()
 		return c.json({ subscription });
 	});
 
+// GET /api/subscriptions とサブスクページの初期データ取得で共有する。
+export async function getSubscriptionsOverview(
+	db: Database,
+	currentUser: SessionUser | null,
+) {
+	const { user, isReadOnly } = await resolveReadableDataOwner(db, currentUser);
+
+	if (!user) {
+		return {
+			subscriptions: [],
+			labels: [],
+			owner: null,
+			isReadOnly,
+		};
+	}
+
+	const result = await getSubscriptionsWithLabels(db, user.id, {
+		maskPrivateDetails: isReadOnly,
+	});
+
+	return {
+		...result,
+		owner: toPublicDataOwner(user),
+		isReadOnly,
+	};
+}
+
 export async function getSubscriptionsWithLabels(
 	db: DbClient,
 	userId: string,
 	options: { maskPrivateDetails?: boolean } = {},
 ) {
-	const subscriptions = await db
-		.select()
-		.from(schema.subscription)
-		.where(eq(schema.subscription.userId, userId))
-		.orderBy(
-			asc(schema.subscription.nextPaymentAt),
-			asc(schema.subscription.name),
-		);
-	const labels = await getUserLabels(db, userId);
-	const assignments = subscriptions.length
-		? await db
-				.select({
-					subscriptionId: schema.subscriptionLabelAssignment.subscriptionId,
-					labelId: schema.subscriptionLabelAssignment.labelId,
-				})
-				.from(schema.subscriptionLabelAssignment)
-				.where(
-					inArray(
-						schema.subscriptionLabelAssignment.subscriptionId,
-						subscriptions.map((subscription) => subscription.id),
-					),
-				)
-		: [];
+	// 3 クエリは互いに依存しないので同時に投げ、DB との往復を 1 回分に収める。
+	// ラベル割り当ては subscription ID の IN 句ではなく userId で JOIN して引く。
+	const [subscriptions, labels, assignments] = await Promise.all([
+		db
+			.select()
+			.from(schema.subscription)
+			.where(eq(schema.subscription.userId, userId))
+			.orderBy(
+				asc(schema.subscription.nextPaymentAt),
+				asc(schema.subscription.name),
+			),
+		getUserLabels(db, userId),
+		db
+			.select({
+				subscriptionId: schema.subscriptionLabelAssignment.subscriptionId,
+				labelId: schema.subscriptionLabelAssignment.labelId,
+			})
+			.from(schema.subscriptionLabelAssignment)
+			.innerJoin(
+				schema.subscription,
+				eq(
+					schema.subscription.id,
+					schema.subscriptionLabelAssignment.subscriptionId,
+				),
+			)
+			.where(eq(schema.subscription.userId, userId)),
+	]);
 	const labelIdsBySubscriptionId = new Map<string, string[]>();
 
 	for (const assignment of assignments) {

@@ -15,7 +15,8 @@ import {
 import { getUserOrThrow } from "@/server/middleware/auth";
 import { createBlobFile } from "@/server/objects/file";
 import {
-	getReadableDataOwner,
+	resolveReadableDataOwner,
+	type SessionUser,
 	toPublicDataOwner,
 } from "@/server/routes/public-data-owner";
 import {
@@ -90,40 +91,9 @@ type LinkMetadata = {
 
 const app = createHonoApp()
 	.get("/", zValidator("query", scrapsQuerySchema), async (c) => {
-		const { user, isReadOnly } = await getReadableDataOwner(c);
-		const query = c.req.valid("query");
-		const pagination = {
-			page: query.page,
-			perPage: query.perPage,
-			total: 0,
-			pageCount: 0,
-		};
-
-		if (!user) {
-			return c.json({ scraps: [], owner: null, isReadOnly, pagination });
-		}
-
-		const scraps = await getScraps(c.get("db"), user.id, {
-			publicOnly: isReadOnly,
-			search: query.q,
-			limit: query.perPage,
-			offset: (query.page - 1) * query.perPage,
-		});
-		const total = await getScrapCount(c.get("db"), user.id, {
-			publicOnly: isReadOnly,
-			search: query.q,
-		});
-
-		return c.json({
-			scraps,
-			owner: toPublicDataOwner(user),
-			isReadOnly,
-			pagination: {
-				...pagination,
-				total,
-				pageCount: Math.ceil(total / query.perPage),
-			},
-		});
+		return c.json(
+			await getScrapsOverview(c.get("db"), c.get("user"), c.req.valid("query")),
+		);
 	})
 	.get("/files/:id", async (c) => {
 		const fileId = c.req.param("id");
@@ -190,6 +160,50 @@ const app = createHonoApp()
 		return c.json({ scrap: targetScrap });
 	});
 
+// GET /api/scraps とスクラップ一覧ページの初期データ取得で共有する。
+export async function getScrapsOverview(
+	db: Database,
+	currentUser: SessionUser | null,
+	query: { page: number; perPage: number; q: string },
+) {
+	const { user, isReadOnly } = await resolveReadableDataOwner(db, currentUser);
+	const pagination = {
+		page: query.page,
+		perPage: query.perPage,
+		total: 0,
+		pageCount: 0,
+	};
+
+	if (!user) {
+		return { scraps: [], owner: null, isReadOnly, pagination };
+	}
+
+	// 一覧と件数は独立しているので同時に取得する。
+	const [scraps, total] = await Promise.all([
+		getScraps(db, user.id, {
+			publicOnly: isReadOnly,
+			search: query.q,
+			limit: query.perPage,
+			offset: (query.page - 1) * query.perPage,
+		}),
+		getScrapCount(db, user.id, {
+			publicOnly: isReadOnly,
+			search: query.q,
+		}),
+	]);
+
+	return {
+		scraps,
+		owner: toPublicDataOwner(user),
+		isReadOnly,
+		pagination: {
+			...pagination,
+			total,
+			pageCount: Math.ceil(total / query.perPage),
+		},
+	};
+}
+
 export async function getScraps(
 	db: Database,
 	userId: string,
@@ -224,15 +238,17 @@ export async function getScraps(
 		return [];
 	}
 
-	const previews = await db
-		.select()
-		.from(schema.scrapLinkPreview)
-		.where(inArray(schema.scrapLinkPreview.scrapId, scrapIds));
-	const attachments = await db
-		.select()
-		.from(schema.scrapAttachment)
-		.where(inArray(schema.scrapAttachment.scrapId, scrapIds))
-		.orderBy(schema.scrapAttachment.position);
+	const [previews, attachments] = await Promise.all([
+		db
+			.select()
+			.from(schema.scrapLinkPreview)
+			.where(inArray(schema.scrapLinkPreview.scrapId, scrapIds)),
+		db
+			.select()
+			.from(schema.scrapAttachment)
+			.where(inArray(schema.scrapAttachment.scrapId, scrapIds))
+			.orderBy(schema.scrapAttachment.position),
+	]);
 
 	const previewByScrapId = new Map(
 		previews.map((preview) => [preview.scrapId, preview]),

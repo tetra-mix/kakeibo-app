@@ -5,10 +5,12 @@ import { uuidv7 } from "uuidv7";
 import { z } from "zod";
 
 import * as schema from "@/db/schema";
+import type { Database } from "@/lib/db";
 import { createHonoApp } from "@/server/create-app";
 import { getUserOrThrow } from "@/server/middleware/auth";
 import {
-	getReadableDataOwner,
+	resolveReadableDataOwner,
+	type SessionUser,
 	toPublicDataOwner,
 } from "@/server/routes/public-data-owner";
 
@@ -51,29 +53,7 @@ const todoIdSchema = z.object({
 
 const app = createHonoApp()
 	.get("/", async (c) => {
-		const { user, isReadOnly } = await getReadableDataOwner(c);
-
-		if (!user) {
-			return c.json({ todos: [], owner: null, isReadOnly });
-		}
-
-		const filters = [eq(schema.todo.userId, user.id)];
-		if (isReadOnly) {
-			filters.push(eq(schema.todo.isPrivate, false));
-		}
-
-		const todos = await c
-			.get("db")
-			.select()
-			.from(schema.todo)
-			.where(and(...filters))
-			.orderBy(
-				sql`case ${schema.todo.priority} when 'high' then 0 when 'medium' then 1 when 'low' then 2 else 3 end`,
-				asc(schema.todo.dueAt),
-				desc(schema.todo.createdAt),
-			);
-
-		return c.json({ todos, owner: toPublicDataOwner(user), isReadOnly });
+		return c.json(await getTodosOverview(c.get("db"), c.get("user")));
 	})
 	.post("/", zValidator("json", createTodoSchema), async (c) => {
 		const { user } = await getUserOrThrow(c);
@@ -135,5 +115,34 @@ const app = createHonoApp()
 
 		return c.json({ todo });
 	});
+
+// GET /api/todos と Todo ページの初期データ取得で共有する。
+export async function getTodosOverview(
+	db: Database,
+	currentUser: SessionUser | null,
+) {
+	const { user, isReadOnly } = await resolveReadableDataOwner(db, currentUser);
+
+	if (!user) {
+		return { todos: [], owner: null, isReadOnly };
+	}
+
+	const filters = [eq(schema.todo.userId, user.id)];
+	if (isReadOnly) {
+		filters.push(eq(schema.todo.isPrivate, false));
+	}
+
+	const todos = await db
+		.select()
+		.from(schema.todo)
+		.where(and(...filters))
+		.orderBy(
+			sql`case ${schema.todo.priority} when 'high' then 0 when 'medium' then 1 when 'low' then 2 else 3 end`,
+			asc(schema.todo.dueAt),
+			desc(schema.todo.createdAt),
+		);
+
+	return { todos, owner: toPublicDataOwner(user), isReadOnly };
+}
 
 export default app;

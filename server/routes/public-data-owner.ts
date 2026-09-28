@@ -2,16 +2,24 @@ import { asc } from "drizzle-orm";
 
 import * as schema from "@/db/schema";
 import type { auth } from "@/lib/auth";
+import type { Database } from "@/lib/db";
 import { isPublicFirstUserEnabled } from "@/lib/public-data-settings";
 import type { Context } from "@/server/types";
 
-type User = typeof auth.$Infer.Session.user;
+export type SessionUser = typeof auth.$Infer.Session.user;
 
-export type PublicDataOwner = Pick<User, "id" | "name">;
+export type PublicDataOwner = Pick<SessionUser, "id" | "name">;
 
 export async function getReadableDataOwner(c: Context) {
-	const currentUser = c.get("user");
+	return await resolveReadableDataOwner(c.get("db"), c.get("user"));
+}
 
+// Hono のコンテキスト外（サーバーコンポーネントでの初期データ取得など）からも
+// 同じ判定を使えるよう、DB とログインユーザーだけで解決する。
+export async function resolveReadableDataOwner(
+	db: Database,
+	currentUser: SessionUser | null,
+) {
 	if (currentUser) {
 		return {
 			user: currentUser,
@@ -26,8 +34,7 @@ export async function getReadableDataOwner(c: Context) {
 		} as const;
 	}
 
-	const [firstUser] = await c
-		.get("db")
+	const [firstUser] = await db
 		.select()
 		.from(schema.user)
 		.orderBy(asc(schema.user.createdAt), asc(schema.user.id))
@@ -39,7 +46,7 @@ export async function getReadableDataOwner(c: Context) {
 	} as const;
 }
 
-export function toPublicDataOwner(user: User): PublicDataOwner {
+export function toPublicDataOwner(user: SessionUser): PublicDataOwner {
 	return {
 		id: user.id,
 		name: user.name,
