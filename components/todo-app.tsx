@@ -71,12 +71,20 @@ const priorityRank: Record<TodoPriority, number> = {
 	none: 3,
 };
 
-export function TodoApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
-	const [todos, setTodos] = useState<Todo[]>([]);
+export function TodoApp({
+	isReadOnly = false,
+	initialData,
+}: {
+	isReadOnly?: boolean;
+	initialData?: TodosResponse;
+}) {
+	const [todos, setTodos] = useState<Todo[]>(() =>
+		initialData ? sortTodos(initialData.todos) : [],
+	);
 	const [title, setTitle] = useState("");
 	const [isPrivate, setIsPrivate] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
+	const [isLoading, setIsLoading] = useState(!initialData);
 	const [isCreating, setIsCreating] = useState(false);
 	const [selectedTodo, setSelectedTodo] = useState<Todo | null>(null);
 	const [draftPriority, setDraftPriority] = useState<TodoPriority>("none");
@@ -84,7 +92,9 @@ export function TodoApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 	const [draftDueTime, setDraftDueTime] = useState("");
 	const [draftIsPrivate, setDraftIsPrivate] = useState(false);
 	const [isSavingOptions, setIsSavingOptions] = useState(false);
-	const [ownerName, setOwnerName] = useState<string | null>(null);
+	const [ownerName, setOwnerName] = useState<string | null>(
+		initialData?.owner?.name ?? null,
+	);
 	const [now, setNow] = useState(() => Date.now());
 
 	useEffect(() => {
@@ -96,6 +106,11 @@ export function TodoApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 	}, []);
 
 	useEffect(() => {
+		// サーバーで取得済みなら再取得しない。
+		if (initialData) {
+			return;
+		}
+
 		let ignore = false;
 
 		const loadTodos = async () => {
@@ -125,7 +140,7 @@ export function TodoApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 		return () => {
 			ignore = true;
 		};
-	}, []);
+	}, [initialData]);
 
 	const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();

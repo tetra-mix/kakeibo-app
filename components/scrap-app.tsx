@@ -28,29 +28,44 @@ import {
 import { SpinnerCustom } from "@/components/ui/spinner";
 import { apiClient } from "@/lib/api-client";
 import { formatDate, formatHost, kindIcons, kindLabels } from "./scrap-detail";
-import type { Scrap, ScrapsResponse } from "./scrap-types";
+import {
+	SCRAPS_PER_PAGE,
+	type Scrap,
+	type ScrapsResponse,
+} from "./scrap-types";
 
-const SCRAPS_PER_PAGE = 30;
 const SEARCH_DEBOUNCE_MS = 250;
 
-export function ScrapApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
-	const [scraps, setScraps] = useState<Scrap[]>([]);
+export function ScrapApp({
+	isReadOnly = false,
+	initialData,
+}: {
+	isReadOnly?: boolean;
+	initialData?: ScrapsResponse;
+}) {
+	const [scraps, setScraps] = useState<Scrap[]>(initialData?.scraps ?? []);
 	const [request, setRequest] = useState({ page: 1, reloadKey: 0, search: "" });
 	const [searchInput, setSearchInput] = useState("");
-	const [pagination, setPagination] = useState({
-		page: 1,
-		perPage: SCRAPS_PER_PAGE,
-		total: 0,
-		pageCount: 0,
-	});
+	const [pagination, setPagination] = useState(
+		initialData?.pagination ?? {
+			page: 1,
+			perPage: SCRAPS_PER_PAGE,
+			total: 0,
+			pageCount: 0,
+		},
+	);
 	const [title, setTitle] = useState("");
 	const [body, setBody] = useState("");
 	const [images, setImages] = useState<File[]>([]);
 	const [fileInputKey, setFileInputKey] = useState(0);
 	const [isPrivate, setIsPrivate] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
-	const [hasFinishedInitialLoad, setHasFinishedInitialLoad] = useState(false);
+	const [isLoading, setIsLoading] = useState(!initialData);
+	const [hasFinishedInitialLoad, setHasFinishedInitialLoad] = useState(
+		Boolean(initialData),
+	);
+	// 初回（1 ページ目・検索なし）はサーバーで取得済みなので一度だけ取得を省く。
+	const skipNextLoadRef = useRef(Boolean(initialData));
 	const [isSaving, setIsSaving] = useState(false);
 
 	const commitSearch = useCallback((value: string) => {
@@ -64,6 +79,11 @@ export function ScrapApp({ isReadOnly = false }: { isReadOnly?: boolean }) {
 	}, []);
 
 	useEffect(() => {
+		if (skipNextLoadRef.current) {
+			skipNextLoadRef.current = false;
+			return;
+		}
+
 		let ignore = false;
 		const queryPage = request.page;
 

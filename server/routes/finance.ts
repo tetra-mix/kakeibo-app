@@ -10,6 +10,8 @@ import { createHonoApp } from "@/server/create-app";
 import { getUserOrThrow } from "@/server/middleware/auth";
 import {
 	getReadableDataOwner,
+	resolveReadableDataOwner,
+	type SessionUser,
 	toPublicDataOwner,
 } from "@/server/routes/public-data-owner";
 
@@ -126,22 +128,7 @@ const analyticsQuerySchema = z.object({
 
 const app = createHonoApp()
 	.get("/", async (c) => {
-		const { user, isReadOnly } = await getReadableDataOwner(c);
-
-		if (!user) {
-			return c.json({ entries: [], tags: [], owner: null, isReadOnly });
-		}
-
-		const result = await getFinanceEntriesWithTags(c.get("db"), user.id, {
-			ensureDefaultTags: !isReadOnly,
-			publicOnly: isReadOnly,
-		});
-
-		return c.json({
-			...result,
-			owner: toPublicDataOwner(user),
-			isReadOnly,
-		});
+		return c.json(await getFinanceOverview(c.get("db"), c.get("user")));
 	})
 	.get("/analytics", zValidator("query", analyticsQuerySchema), async (c) => {
 		const { user, isReadOnly } = await getReadableDataOwner(c);
@@ -251,6 +238,29 @@ const app = createHonoApp()
 		return c.json({ entry });
 	});
 
+// GET /api/finance と家計簿ページの初期データ取得で共有する。
+export async function getFinanceOverview(
+	db: Database,
+	currentUser: SessionUser | null,
+) {
+	const { user, isReadOnly } = await resolveReadableDataOwner(db, currentUser);
+
+	if (!user) {
+		return { entries: [], tags: [], owner: null, isReadOnly };
+	}
+
+	const result = await getFinanceEntriesWithTags(db, user.id, {
+		ensureDefaultTags: !isReadOnly,
+		publicOnly: isReadOnly,
+	});
+
+	return {
+		...result,
+		owner: toPublicDataOwner(user),
+		isReadOnly,
+	};
+}
+
 export async function getFinanceEntriesWithTags(
 	db: DbClient,
 	userId: string,
@@ -263,10 +273,6 @@ export async function getFinanceEntriesWithTags(
 		tagIds?: string[];
 	} = {},
 ) {
-	if (options.ensureDefaultTags) {
-		await ensureDefaultFinanceTags(db, userId);
-	}
-
 	const filters = [eq(schema.financeEntry.userId, userId)];
 	if (options.from) {
 		filters.push(gte(schema.financeEntry.occurredAt, options.from));
@@ -277,30 +283,34 @@ export async function getFinanceEntriesWithTags(
 	if (options.type) {
 		filters.push(eq(schema.financeEntry.type, options.type));
 	}
+	const entryFilter = and(...filters);
 
-	const entries = await db
-		.select()
-		.from(schema.financeEntry)
-		.where(and(...filters))
-		.orderBy(
-			desc(schema.financeEntry.occurredAt),
-			desc(schema.financeEntry.createdAt),
-		);
-	const tags = await getUserFinanceTags(db, userId);
-	const assignments = entries.length
-		? await db
-				.select({
-					entryId: schema.financeEntryTagAssignment.entryId,
-					tagId: schema.financeEntryTagAssignment.tagId,
-				})
-				.from(schema.financeEntryTagAssignment)
-				.where(
-					inArray(
-						schema.financeEntryTagAssignment.entryId,
-						entries.map((entry) => entry.id),
-					),
-				)
-		: [];
+	// 3 クエリは互いに依存しないので同時に投げ、DB との往復を 1 回分に収める。
+	// タグ割り当ては entry ID の IN 句ではなく同じ条件で JOIN して引く。
+	const [tags, entries, assignments] = await Promise.all([
+		options.ensureDefaultTags
+			? ensureDefaultFinanceTags(db, userId)
+			: getUserFinanceTags(db, userId),
+		db
+			.select()
+			.from(schema.financeEntry)
+			.where(entryFilter)
+			.orderBy(
+				desc(schema.financeEntry.occurredAt),
+				desc(schema.financeEntry.createdAt),
+			),
+		db
+			.select({
+				entryId: schema.financeEntryTagAssignment.entryId,
+				tagId: schema.financeEntryTagAssignment.tagId,
+			})
+			.from(schema.financeEntryTagAssignment)
+			.innerJoin(
+				schema.financeEntry,
+				eq(schema.financeEntry.id, schema.financeEntryTagAssignment.entryId),
+			)
+			.where(entryFilter),
+	]);
 	const tagIdsByEntryId = new Map<string, string[]>();
 
 	for (const assignment of assignments) {
